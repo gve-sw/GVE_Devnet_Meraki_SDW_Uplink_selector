@@ -18,6 +18,7 @@ or implied.
 import meraki
 from mping import MultiPing, multi_ping
 import time
+import sys
 from credentials import api_key, org_id
 
 
@@ -56,9 +57,11 @@ period_loss_report_tolerance=12
 # number of seconds after failing over to secondary WAN link to wait until evaluating main link again to switch back
 failback_wait_time = 120
 
-disconnected_loss=100000
-disconnected_latency=100000
-
+# set useWhiteList to True if you wish to only include devices from certain NetworkIds in the monitoring.
+# to specify the list of network IDs to consider, add them one per line in the networks_whitelist.txt file in the same
+# directory as this Python script. If the file is missing it will consider the whitelist as empty and not monitor
+# any devices unless you set useWhiteList to False
+useWhiteList=True
 
 dashboard = meraki.DashboardAPI(api_key, output_log=False, suppress_logging= True)
 
@@ -170,9 +173,21 @@ allMXDevices={}
 deviceSerialofUplinkIP={}
 allUplinkIPs=[]
 def refreshDevicesDict():
-    global allMXDevices, allUplinkIPs
+    global allMXDevices, allUplinkIPs, useWhiteList
     allUplinkIPs=[]
     allMXDevices = {}
+    white_list=[]
+
+    # read a whitelist of network IDs to consider when adding devices to the Dict
+    try:
+        with open('networks_whitelist.txt') as my_file:
+            white_list = my_file.read().splitlines()
+    except IOError as e:
+        print("Error trying to read whitelist, skipping...")
+    except:
+        print("Unexpected error: ",sys.exc_info()[0])
+
+
     # Get the last 5 minutes of UplinkLoss and Latency data for all MX devices in the Organization
     # to make a list of which to monitor via Ping.
     org = dashboard.organizations.getOrganizationDevicesUplinksLossAndLatency(organizationId=org_id)
@@ -180,16 +195,19 @@ def refreshDevicesDict():
     for anEntry in org:
         if anEntry['serial'] not in allMXDevices.keys():
             deviceInfo=dashboard.devices.getDevice(anEntry['serial'])
-            wan1IP=deviceInfo['wan1Ip']
-            wan2IP=deviceInfo['wan2Ip']
-            allMXDevices[anEntry['serial']] = WAN_device(networkId=anEntry['networkId'], serial=anEntry['serial'],uplink1_ip=wan1IP,uplink2_ip=wan2IP, my_org_number=org_id)
-            #keeping track of which IPs belong to which MX devices and also which wan link is for each IP address
-            if wan1IP!=None:
-                deviceSerialofUplinkIP[wan1IP]=[anEntry['serial'],'wan1']
-                allUplinkIPs.append(wan1IP)
-            if wan2IP!=None:
-                deviceSerialofUplinkIP[wan2IP]=[anEntry['serial'],'wan2']
-                allUplinkIPs.append(wan2IP)
+            # If useWhiteList is True, then there the NetworkId of the device has to be in the list for it to be considered.
+            # Otherwise, the condition will always be met and the device will be considered to add to the list.
+            if ((not useWhiteList)  or  (anEntry['networkId'] in white_list)):
+                wan1IP=deviceInfo['wan1Ip']
+                wan2IP=deviceInfo['wan2Ip']
+                allMXDevices[anEntry['serial']] = WAN_device(networkId=anEntry['networkId'], serial=anEntry['serial'],uplink1_ip=wan1IP,uplink2_ip=wan2IP, my_org_number=org_id)
+                #keeping track of which IPs belong to which MX devices and also which wan link is for each IP address
+                if wan1IP!=None:
+                    deviceSerialofUplinkIP[wan1IP]=[anEntry['serial'],'wan1']
+                    allUplinkIPs.append(wan1IP)
+                if wan2IP!=None:
+                    deviceSerialofUplinkIP[wan2IP]=[anEntry['serial'],'wan2']
+                    allUplinkIPs.append(wan2IP)
 
 refreshDevicesDict()
 print(allMXDevices)
@@ -197,42 +215,48 @@ print(allMXDevices)
 
 # forever loop to ping all devices and decide if to act
 while True:
-    responses, no_responses = multi_ping(allUplinkIPs, timeout=ping_timeout, retry=ping_retry, ignore_lookup_errors=True)
-    print("responses=", responses, "no_responses=", no_responses)
+    if len(allUplinkIPs)>0:
+        responses, no_responses = multi_ping(allUplinkIPs, timeout=ping_timeout, retry=ping_retry, ignore_lookup_errors=True)
+        print("responses=", responses, "no_responses=", no_responses)
 
-    responsesPerSerial={}
-    # example responsesPerSerial['ER34234']=[0.009306907653808594,0.012850046157836914]
-    for response in responses.keys():
-        theDev=deviceSerialofUplinkIP[response]
-        theDevSerial=theDev[0]
-        theDevWan = theDev[1]
-        # initialize the response array if not already done
-        if theDevSerial not in responsesPerSerial:
-            responsesPerSerial[theDevSerial]=[None,None]
-        if theDevWan=='wan1':
-            responsesPerSerial[theDevSerial][0]=responses[response]
-        if theDevWan=='wan2':
-            responsesPerSerial[theDevSerial][1]=responses[response]
+        responsesPerSerial={}
+        # example responsesPerSerial['ER34234']=[0.009306907653808594,0.012850046157836914]
+        for response in responses.keys():
+            theDev=deviceSerialofUplinkIP[response]
+            theDevSerial=theDev[0]
+            theDevWan = theDev[1]
+            # initialize the response array if not already done
+            if theDevSerial not in responsesPerSerial:
+                responsesPerSerial[theDevSerial]=[None,None]
+            if theDevWan=='wan1':
+                responsesPerSerial[theDevSerial][0]=responses[response]
+            if theDevWan=='wan2':
+                responsesPerSerial[theDevSerial][1]=responses[response]
 
-    #now process the no_response array
-    for nresponse in no_responses:
-        theDev=deviceSerialofUplinkIP[nresponse]
-        theDevSerial=theDev[0]
-        theDevWan = theDev[1]
-        #initialize the response array if there was none returned in response above
-        if theDevSerial not in responsesPerSerial:
-            responsesPerSerial[theDevSerial] = [None, None]
-        if theDevWan=='wan1':
-            responsesPerSerial[theDevSerial][0]=-1
-        if theDevWan=='wan2':
-            responsesPerSerial[theDevSerial][1]=-1
+        #now process the no_response array
+        for nresponse in no_responses:
+            theDev=deviceSerialofUplinkIP[nresponse]
+            theDevSerial=theDev[0]
+            theDevWan = theDev[1]
+            #initialize the response array if there was none returned in response above
+            if theDevSerial not in responsesPerSerial:
+                responsesPerSerial[theDevSerial] = [None, None]
+            if theDevWan=='wan1':
+                responsesPerSerial[theDevSerial][0]=-1
+            if theDevWan=='wan2':
+                responsesPerSerial[theDevSerial][1]=-1
 
 
-    for entry_serial in allMXDevices:
-        allMXDevices[entry_serial].uplink_selector(responsesPerSerial[entry_serial])
+        for entry_serial in allMXDevices:
+            allMXDevices[entry_serial].uplink_selector(responsesPerSerial[entry_serial])
 
-    #just to give a small break between calls to multi-ping, could remove
-    time.sleep(inter_ping_delay)
+        #just to give a small break between calls to multi-ping, could remove
+        time.sleep(inter_ping_delay)
+    else:
+        print("No devices to ping...")
+        # sleep for a minute in case they want to keep it running to arrive at the top of the hour to check again
+        # for devices
+        time.sleep(60)
 
     #check for new devices at the top of the hour
     if ((time.time() % 3600) == 0):

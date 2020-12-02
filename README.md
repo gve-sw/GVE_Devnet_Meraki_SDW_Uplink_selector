@@ -19,7 +19,17 @@ The functionality is containted in the `mping.py` source file.
 * Install the necessary libraries:  
 ``` pip install -r requirements.txt```  
 
-* Set your Meraki API key and OrgID in the `credentials.py` file. 
+* Set your Meraki API key and OrgID in the `credentials.py` file.  
+To obtain the API key, open your Meraki dashboard: https://dashboard.meraki.com  
+Once logged in, navigate to the Organization Settings menu.  
+Ensure that the API Access is set to “Enable access to the Cisco Meraki Dashboard API”  
+Then go to your profile to generate the API key. (save this key in a secure location, as it represents your admin credentials)  
+More details here: https://developer.cisco.com/meraki/api/#!authorization/authorization  
+To obtain the Org ID, you can use the /organizations REST API call as documented here: 
+https://developer.cisco.com/meraki/api/#!get-organizations  
+Here are details on how to obtain it using Postman also:  
+https://developer.cisco.com/meraki/meraki-platform/#step-2-get-the-organization-id
+
 
 * Edit the configuration parameters in `MX_uplink_monitor_selector.py`:  
     
@@ -49,6 +59,8 @@ The functionality is containted in the `mping.py` source file.
     
     *failback_wait_time* is the number of seconds after failing over to secondary WAN link to wait until evaluating main link again to switch back
 
+    *useWhiteList* is a boolean (set to True or False) that can be used to only include devices from certain NetworkIds in the monitoring.  
+    To specify the list of network IDs to consider, add them one per line in the `networks_whitelist.txt` file in the same directory as this Python script. If the file is missing it will consider the whitelist as empty and not monitor any devices unless you set useWhiteList to False  
 
 ## Usage
 

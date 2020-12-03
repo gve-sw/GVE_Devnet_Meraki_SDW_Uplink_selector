@@ -62,6 +62,9 @@ https://developer.cisco.com/meraki/meraki-platform/#step-2-get-the-organization-
     *useWhiteList* is a boolean (set to True or False) that can be used to only include devices from certain NetworkIds in the monitoring.  
     To specify the list of network IDs to consider, add them one per line in the `networks_whitelist.txt` file in the same directory as this Python script. If the file is missing it will consider the whitelist as empty and not monitor any devices unless you set useWhiteList to False  
 
+    *useWANpublicIP* is a boolean (set to True or False) that can be used to specify if you wish to use the publicIP of the WAN interfaces instead of the IP assigned to the interface, set useWANpublicIP to True. This will extract the publicIP of the uplink (if available) using this API call https://developer.cisco.com/meraki/api/#!get-network-device-uplink and overwrite the IP address obtained for the MX devices using this API call https://developer.cisco.com/meraki/api/#!get-network-device ( wan1Ip and wan2Ip )
+
+
 ## Usage
 
 

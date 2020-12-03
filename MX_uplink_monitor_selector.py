@@ -16,6 +16,8 @@ or implied.
 """
 
 import meraki
+import requests
+import json
 from mping import MultiPing, multi_ping
 import time
 import sys
@@ -62,6 +64,13 @@ failback_wait_time = 120
 # directory as this Python script. If the file is missing it will consider the whitelist as empty and not monitor
 # any devices unless you set useWhiteList to False
 useWhiteList=True
+
+# If you wish to use the publicIP of the WAN interfaces instead of the
+# IP assigned to the interface, set useWANpublicIP to True. This will extract the publicIP of the uplink
+# (if available) using this API call https://developer.cisco.com/meraki/api/#!get-network-device-uplink
+# and overwrite the IP address obtained for the MX devices
+# using this API call https://developer.cisco.com/meraki/api/#!get-network-device ( wan1Ip and wan2Ip )
+useWANpublicIP=False
 
 dashboard = meraki.DashboardAPI(api_key, output_log=False, suppress_logging= True)
 
@@ -195,11 +204,41 @@ def refreshDevicesDict():
     for anEntry in org:
         if anEntry['serial'] not in allMXDevices.keys():
             deviceInfo=dashboard.devices.getDevice(anEntry['serial'])
+            print("GetDevice: ",deviceInfo)
+            #TODO: Need to change call to getNetworkDeviceUplink to not use the SDK since it does not seem to be there
+            # (Switch to requests library?)
+            print("Trying to call getNetworkDeviceUplink with: ",anEntry['networkId'],"  ",anEntry['serial'])
+            url = "https://api.meraki.com/api/v0/networks/"+anEntry['networkId']+"/devices/"+anEntry['serial']+"/uplink"
+            payload = None
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "X-Cisco-Meraki-API-Key": api_key
+            }
+            response = requests.request('GET', url, headers=headers, data=payload)
+            deviceULinkInfo=json.loads(response.text.encode('utf8'))
+            print("DeviceULinkInfo: ", deviceULinkInfo)
+
             # If useWhiteList is True, then there the NetworkId of the device has to be in the list for it to be considered.
             # Otherwise, the condition will always be met and the device will be considered to add to the list.
             if ((not useWhiteList)  or  (anEntry['networkId'] in white_list)):
                 wan1IP=deviceInfo['wan1Ip']
                 wan2IP=deviceInfo['wan2Ip']
+
+                #  Change to the publicIp of an uplink if useWANpublicIP is set to true
+                if useWANpublicIP:
+                    if len(deviceULinkInfo)>0:
+                        if deviceULinkInfo[0]['interface']=='WAN 1':
+                            wan1IP=deviceULinkInfo[0]['publicIp']
+                        elif deviceULinkInfo[0]['interface']=='WAN 2':
+                            wan2IP = deviceULinkInfo[0]['publicIp']
+                    if len(deviceULinkInfo)>1:
+                        if deviceULinkInfo[1]['interface']=='WAN 1':
+                            wan1IP=deviceULinkInfo[1]['publicIp']
+                        elif deviceULinkInfo[1]['interface']=='WAN 2':
+                            wan2IP = deviceULinkInfo[1]['publicIp']
+
+
                 allMXDevices[anEntry['serial']] = WAN_device(networkId=anEntry['networkId'], serial=anEntry['serial'],uplink1_ip=wan1IP,uplink2_ip=wan2IP, my_org_number=org_id)
                 #keeping track of which IPs belong to which MX devices and also which wan link is for each IP address
                 if wan1IP!=None:

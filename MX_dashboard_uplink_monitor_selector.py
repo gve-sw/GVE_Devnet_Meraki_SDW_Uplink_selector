@@ -22,13 +22,14 @@ from credentials import api_key, org_id
 from datetime import datetime
 
 #dasboard_call_delay is the number of seconds to wait between calls to the Meraki Dashboard to evaluate the condition of
-# uplinks. This can be as little as .20 seconds, but that would be the limit of API calls per second an application can make
-# and since the "resolution" of the uplink stats is no less than 60 seconds it would not help at all
-# default is set to 60 seconds
-dashboard_call_delay=60
+# uplinks. This can be as little as .20 seconds, but that would be the limit of API calls per second an application can make.
+# default is set to 1 seconds so that the script can get the updated statistics at most 1 second after they are available,
+# giving us visibility in to stats starting at 121 seconds in the past.
+dashboard_call_delay=1
 
-# number of seconds to evaluate a negative network condition
-trouble_eval_window = 120
+# number of seconds to evaluate a negative network condition. This window starts from T-120 seconds and into the past given that the
+# Meraki Dashboard API does not provide any stats earlier than that.
+trouble_eval_window = 60
 
 # average latency in seconds to tolerate during the trouble_eval_window time period before deciding
 # we have a latency problem

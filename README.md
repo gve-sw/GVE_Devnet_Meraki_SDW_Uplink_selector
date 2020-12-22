@@ -81,7 +81,8 @@ https://developer.cisco.com/meraki/meraki-platform/#step-2-get-the-organization-
   the script with check the `trouble_eval_window` period in the past to make sure WAN1 is healthy.  
     *useWhiteList* is a boolean (set to True or False) that can be used to only include devices from certain NetworkIds in the monitoring.  
     To specify the list of network IDs to consider, add them one per line in the `networks_whitelist.txt` file in the same directory as this Python script. If the file is missing it will consider the whitelist as empty and not monitor any devices unless you set useWhiteList to False  
-    *dashboard_call_delay* is the number of seconds to wait between calls to the Meraki Dashboard to evaluate the condition of uplinks. This can be as little as .20 seconds, but that would be the limit of API calls per second an application can make and since the "resolution" of the uplink stats is no less than 60 seconds it would not help at all. The default is set to 60 seconds  
+    *dashboard_call_delay* is the number of seconds to wait between calls to the Meraki Dashboard to evaluate the condition of uplinks. This can be as little as .20 seconds, but that would be the limit of API calls per second an application can make. 
+  Default is set to 1 second so that the script can get the updated statistics at most 1 second after they are available, giving us visibility in to stats starting at 121 seconds in the past.  
     *average_latency_tolerance* is the average latency in seconds to tolerate during the trouble_eval_window time period before deciding if we have a latency problem  
     *average_loss_tolerance* is the percent average loss to tolerate during the trouble_eval_window time period before deciding we have a loss problem. Default is set to 30  
 

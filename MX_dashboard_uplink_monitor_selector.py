@@ -171,10 +171,10 @@ class WAN_device:
             if failover_loss['counts']>0:
                 failover_loss['average']=failover_loss['cumulative']/failover_loss['counts']
 
-            print("Evaluating ",self.serial)
-            print("Failover latency: ", failover_latency)
-            print("Failover loss: ", failover_loss)
-
+            #print("Evaluating ",self.serial)
+            #print("Failover latency: ", failover_latency)
+            #print("Failover loss: ", failover_loss)
+            print("Evaluating ",self.serial," with Ave. latency of ",failover_latency['average']," and Ave. loss of ",failover_loss['average']," ",end='')
 
             # check for the existence of WAN2 also if it is responding, no point in switching to it
             # if not configured or disconnected!!
@@ -274,10 +274,19 @@ def refreshDevicesDict():
             # If useWhiteList is True, then there the NetworkId of the device has to be in the list for it to be considered.
             # Otherwise, the condition will always be met and the device will be considered to add to the list.
             if ((not useWhiteList)  or  (anEntry['networkId'] in white_list)):
-                wan1IP=deviceInfo['wan1Ip']
-                wan2IP=deviceInfo['wan2Ip']
-                allMXDevices[anEntry['serial']] = WAN_device(networkId=anEntry['networkId'], serial=anEntry['serial'],uplink1_ip=wan1IP,uplink2_ip=wan2IP, my_org_number=org_id)
-                responsesPerSerial[anEntry['serial']] = [None, None]
+                #fist make sure this device is not a warm spare using getNetworkApplianceWarmSpare call which returns:
+                #{
+                #     "enabled": false,
+                #     "primarySerial": "Q2BN-6Q6Z-RTR4",
+                #     "spareSerial": null
+                # }
+                response_spare = dashboard.appliance.getNetworkApplianceWarmSpare(anEntry['networkId'])
+                #print("Evaluating warm spare for ",anEntry['serial'],": ",response_spare)
+                if response_spare['primarySerial']==anEntry['serial']:
+                    wan1IP=deviceInfo['wan1Ip']
+                    wan2IP=deviceInfo['wan2Ip']
+                    allMXDevices[anEntry['serial']] = WAN_device(networkId=anEntry['networkId'], serial=anEntry['serial'],uplink1_ip=wan1IP,uplink2_ip=wan2IP, my_org_number=org_id)
+                    responsesPerSerial[anEntry['serial']] = [None, None]
 
 refreshDevicesDict()
 print(allMXDevices)

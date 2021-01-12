@@ -205,8 +205,6 @@ def refreshDevicesDict():
         if anEntry['serial'] not in allMXDevices.keys():
             deviceInfo=dashboard.devices.getDevice(anEntry['serial'])
             print("GetDevice: ",deviceInfo)
-            #TODO: Need to change call to getNetworkDeviceUplink to not use the SDK since it does not seem to be there
-            # (Switch to requests library?)
             print("Trying to call getNetworkDeviceUplink with: ",anEntry['networkId'],"  ",anEntry['serial'])
             url = "https://api.meraki.com/api/v0/networks/"+anEntry['networkId']+"/devices/"+anEntry['serial']+"/uplink"
             payload = None
@@ -222,31 +220,40 @@ def refreshDevicesDict():
             # If useWhiteList is True, then there the NetworkId of the device has to be in the list for it to be considered.
             # Otherwise, the condition will always be met and the device will be considered to add to the list.
             if ((not useWhiteList)  or  (anEntry['networkId'] in white_list)):
-                wan1IP=deviceInfo['wan1Ip']
-                wan2IP=deviceInfo['wan2Ip']
+                #fist make sure this device is not a warm spare using getNetworkApplianceWarmSpare call which returns:
+                #{
+                #     "enabled": false,
+                #     "primarySerial": "Q2BN-6Q6Z-RTR4",
+                #     "spareSerial": null
+                # }
+                response_spare = dashboard.appliance.getNetworkApplianceWarmSpare(anEntry['networkId'])
+                #print("Evaluating warm spare for ",anEntry['serial'],": ",response_spare)
+                if response_spare['primarySerial']==anEntry['serial']:
+                    wan1IP=deviceInfo['wan1Ip']
+                    wan2IP=deviceInfo['wan2Ip']
 
-                #  Change to the publicIp of an uplink if useWANpublicIP is set to true
-                if useWANpublicIP:
-                    if len(deviceULinkInfo)>0:
-                        if deviceULinkInfo[0]['interface']=='WAN 1':
-                            wan1IP=deviceULinkInfo[0]['publicIp']
-                        elif deviceULinkInfo[0]['interface']=='WAN 2':
-                            wan2IP = deviceULinkInfo[0]['publicIp']
-                    if len(deviceULinkInfo)>1:
-                        if deviceULinkInfo[1]['interface']=='WAN 1':
-                            wan1IP=deviceULinkInfo[1]['publicIp']
-                        elif deviceULinkInfo[1]['interface']=='WAN 2':
-                            wan2IP = deviceULinkInfo[1]['publicIp']
+                    #  Change to the publicIp of an uplink if useWANpublicIP is set to true
+                    if useWANpublicIP:
+                        if len(deviceULinkInfo)>0:
+                            if deviceULinkInfo[0]['interface']=='WAN 1':
+                                wan1IP=deviceULinkInfo[0]['publicIp']
+                            elif deviceULinkInfo[0]['interface']=='WAN 2':
+                                wan2IP = deviceULinkInfo[0]['publicIp']
+                        if len(deviceULinkInfo)>1:
+                            if deviceULinkInfo[1]['interface']=='WAN 1':
+                                wan1IP=deviceULinkInfo[1]['publicIp']
+                            elif deviceULinkInfo[1]['interface']=='WAN 2':
+                                wan2IP = deviceULinkInfo[1]['publicIp']
 
 
-                allMXDevices[anEntry['serial']] = WAN_device(networkId=anEntry['networkId'], serial=anEntry['serial'],uplink1_ip=wan1IP,uplink2_ip=wan2IP, my_org_number=org_id)
-                #keeping track of which IPs belong to which MX devices and also which wan link is for each IP address
-                if wan1IP!=None:
-                    deviceSerialofUplinkIP[wan1IP]=[anEntry['serial'],'wan1']
-                    allUplinkIPs.append(wan1IP)
-                if wan2IP!=None:
-                    deviceSerialofUplinkIP[wan2IP]=[anEntry['serial'],'wan2']
-                    allUplinkIPs.append(wan2IP)
+                    allMXDevices[anEntry['serial']] = WAN_device(networkId=anEntry['networkId'], serial=anEntry['serial'],uplink1_ip=wan1IP,uplink2_ip=wan2IP, my_org_number=org_id)
+                    #keeping track of which IPs belong to which MX devices and also which wan link is for each IP address
+                    if wan1IP!=None:
+                        deviceSerialofUplinkIP[wan1IP]=[anEntry['serial'],'wan1']
+                        allUplinkIPs.append(wan1IP)
+                    if wan2IP!=None:
+                        deviceSerialofUplinkIP[wan2IP]=[anEntry['serial'],'wan2']
+                        allUplinkIPs.append(wan2IP)
 
 refreshDevicesDict()
 print(allMXDevices)

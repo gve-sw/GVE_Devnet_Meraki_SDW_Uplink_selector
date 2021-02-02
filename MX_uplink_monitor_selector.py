@@ -72,11 +72,24 @@ useWhiteList=True
 # using this API call https://developer.cisco.com/meraki/api/#!get-network-device ( wan1Ip and wan2Ip )
 useWANpublicIP=False
 
+# Assign an IP address as a string to scriptConnTestDestination if you wish to have the script use a ping destination that is not one of the MX devices being evaluated
+# to make sure the script has good network connectivity and it does not confuse network connectivity problems
+# on the machine running the script with actual network issues at the sites where the MXs are installed
+# If you are to use this option, it is suggested you use the IP address of a DNS service
+# such as Google ('8.8.8.8') , OpenDNS ('208.67.222.222') or any other that is very unlikely to stop responding.
+scriptConnTestDestination=''
+
+
+
+
 dashboard = meraki.DashboardAPI(api_key, output_log=False, suppress_logging= True)
 
+# isTestConnHealthy is a boolean used to indicate if the test connection is healthy or not IF scriptConnTestDestination
+# is configured.
+isTestConnHealthy=True
 
 class WAN_device:
-    global trouble_eval_window, average_latency_tolerance, period_loss_report_tolerance, failback_wait_time
+    global trouble_eval_window, average_latency_tolerance, period_loss_report_tolerance, failback_wait_time, isTestConnHealthy
 
     def __init__(self, networkId, serial, my_org_number, uplink1_ip, uplink2_ip):
         self.networkId = networkId
@@ -105,6 +118,7 @@ class WAN_device:
         #   Float : latency as measured by a ping from where this script is running to the Meraki MX uplink interface
         #    -1 : interface is unreachable or disconnected, it is also used to estimate packet loss
         #    None : interface is not configured in the Meraki Dashboard for that MX device
+        global isTestConnHealthy
 
         #first let's grab a current timestamp to use in all operations
         current_time=time.time()
@@ -141,40 +155,68 @@ class WAN_device:
                 #next, get the number of loss reports, if any (could have had no packet loss in period)
                 loss_count=len(self.loss1_reports)
 
-                print("Average latency: ",average_latency," Loss count: ",loss_count)
+                print(self.serial," Average latency: ",average_latency," Loss count: ",loss_count)
 
-                # ready to check to see if we have to make any uplink changes
-                # first, and only if we are currently on uplink 1 (WAN1), check to see if it has been problematic during
-                # the last seconds specified in trouble_eval_window and see if we need to switch to uplink2 (WAN2)
-                if self.current_uplink==1 and bActiveWAN2 and (average_latency>average_latency_tolerance or loss_count>period_loss_report_tolerance):
-                    print("lat1_reports: ", self.lat1_reports)
-                    print("loss1_reports: ", self.loss1_reports)
-                    # if WAN2 exists and have problems with WAN1, set it as uplink on device, turn off load balancing and record the time we failed over
-                    dashboard.appliance.updateNetworkApplianceTrafficShapingUplinkSelection(networkId=self.networkId, loadBalancingEnabled=False, defaultUplink='wan2')
-                    # since we called the Meraki Dashboard API withing a MX Device Object method which is called within a large loop
-                    # we need to guarantee that we do not call the API more than 5 times per second so if we add a .2 sec delay
-                    # here , even if many other objects will have to make a WAN change, we will not be calling more than 5 times a second
-                    time.sleep(.20)
-                    self.current_uplink = 2
-                    self.last_failover_time=current_time
-                    print('WAN1 problems after tolerance period: Load Balancing disabled, using WAN2 as uplink')
-                else:
-                    if self.current_uplink==2 and current_time-self.last_failover_time>failback_wait_time:
-                        # since enough time has passed since failover to WAN2, and WAN1 seems to have been healthy for the past
-                        # number of seconds specified by trouble_eval_window, it is safe to fail back to WAN1 and turn
-                        # on load balancing.
-                        print("Two minutes have passed since failover, check to see if WAN1 is ok to switch back...")
-                        if average_latency<=average_latency_tolerance and loss_count<=period_loss_report_tolerance:
-                            print("lat1_reports: ", self.lat1_reports)
-                            print("loss1_reports: ", self.loss1_reports)
-                            dashboard.appliance.updateNetworkApplianceTrafficShapingUplinkSelection(
-                                networkId=self.networkId, loadBalancingEnabled=True, defaultUplink='wan1')
-                            # since we called the Meraki Dashboard API withing a MX Device Object method which is called within a large loop
-                            # we need to guarantee that we do not call the API more than 5 times per second so if we add a .2 sec delay
-                            # here , even if many other objects will have to make a WAN change, we will not be calling more than 5 times a second
-                            time.sleep(.20)
-                            self.current_uplink = 1
-                            print('WAN1 good after failback wait time: Failing back to WAN1 as uplink, Load Balancing enabled')
+                if self.serial=='tester':
+                    #handling for special object with serial 'tester' to decide if we proceed with logic
+                    if self.current_uplink==1 and (average_latency>average_latency_tolerance or loss_count>period_loss_report_tolerance):
+                        print("lat1_reports: ", self.lat1_reports)
+                        print("loss1_reports: ", self.loss1_reports)
+
+                        # sets global object to stop checking the rest of MX devices!!!
+                        isTestConnHealthy=False
+
+                        #keep setting the "current_uplink" for consistency, but not needed for this type of object
+                        self.current_uplink = 2
+                        self.last_failover_time = current_time
+                        print('tester destination bad; skipping testing of other devices')
+                    else:
+                        if self.current_uplink == 2 and current_time - self.last_failover_time > failback_wait_time:
+                            print(
+                                "Two minutes have passed since failover, check to see if tester address is ok to switch back...")
+                            if average_latency <= average_latency_tolerance and loss_count <= period_loss_report_tolerance:
+                                print("lat1_reports: ", self.lat1_reports)
+                                print("loss1_reports: ", self.loss1_reports)
+
+                                #set global object to continue checking the rest of MX devices!!!
+                                isTestConnHealthy=True
+                                self.current_uplink = 1
+                                print('tester good after failback wait time.. switching to regular testing')
+
+
+                elif isTestConnHealthy:
+                    # ready to check to see if we have to make any uplink changes
+                    # first, and only if we are currently on uplink 1 (WAN1), check to see if it has been problematic during
+                    # the last seconds specified in trouble_eval_window and see if we need to switch to uplink2 (WAN2)
+                    if self.current_uplink==1 and bActiveWAN2 and (average_latency>average_latency_tolerance or loss_count>period_loss_report_tolerance):
+                        print("lat1_reports: ", self.lat1_reports)
+                        print("loss1_reports: ", self.loss1_reports)
+                        # if WAN2 exists and have problems with WAN1, set it as uplink on device, turn off load balancing and record the time we failed over
+                        dashboard.appliance.updateNetworkApplianceTrafficShapingUplinkSelection(networkId=self.networkId, loadBalancingEnabled=False, defaultUplink='wan2')
+                        # since we called the Meraki Dashboard API withing a MX Device Object method which is called within a large loop
+                        # we need to guarantee that we do not call the API more than 5 times per second so if we add a .2 sec delay
+                        # here , even if many other objects will have to make a WAN change, we will not be calling more than 5 times a second
+                        time.sleep(.20)
+                        self.current_uplink = 2
+                        self.last_failover_time=current_time
+                        print('WAN1 problems after tolerance period: Load Balancing disabled, using WAN2 as uplink')
+                    else:
+                        if self.current_uplink==2 and current_time-self.last_failover_time>failback_wait_time:
+                            # since enough time has passed since failover to WAN2, and WAN1 seems to have been healthy for the past
+                            # number of seconds specified by trouble_eval_window, it is safe to fail back to WAN1 and turn
+                            # on load balancing.
+                            print("Two minutes have passed since failover, check to see if WAN1 is ok to switch back...")
+                            if average_latency<=average_latency_tolerance and loss_count<=period_loss_report_tolerance:
+                                print("lat1_reports: ", self.lat1_reports)
+                                print("loss1_reports: ", self.loss1_reports)
+                                dashboard.appliance.updateNetworkApplianceTrafficShapingUplinkSelection(
+                                    networkId=self.networkId, loadBalancingEnabled=True, defaultUplink='wan1')
+                                # since we called the Meraki Dashboard API withing a MX Device Object method which is called within a large loop
+                                # we need to guarantee that we do not call the API more than 5 times per second so if we add a .2 sec delay
+                                # here , even if many other objects will have to make a WAN change, we will not be calling more than 5 times a second
+                                time.sleep(.20)
+                                self.current_uplink = 1
+                                print('WAN1 good after failback wait time: Failing back to WAN1 as uplink, Load Balancing enabled')
 
 
 
@@ -182,7 +224,7 @@ allMXDevices={}
 deviceSerialofUplinkIP={}
 allUplinkIPs=[]
 def refreshDevicesDict():
-    global allMXDevices, allUplinkIPs, useWhiteList
+    global allMXDevices, allUplinkIPs, useWhiteList, scriptConnTestDestination
     allUplinkIPs=[]
     allMXDevices = {}
     white_list=[]
@@ -196,6 +238,14 @@ def refreshDevicesDict():
     except:
         print("Unexpected error: ",sys.exc_info()[0])
 
+
+    # If scriptConnTestDestination is set, add it as the first "MX device" with a serial number that
+    # identifies it the special test destination "device" to include in ping test but not consider for
+    # switchover
+    if (scriptConnTestDestination!=''):
+        allMXDevices['tester'] = WAN_device(networkId='tester', serial='tester', uplink1_ip=scriptConnTestDestination, uplink2_ip='', my_org_number=org_id)
+        deviceSerialofUplinkIP[scriptConnTestDestination] = ['tester', 'wan1']
+        allUplinkIPs.append(scriptConnTestDestination)
 
     # Get the last 5 minutes of UplinkLoss and Latency data for all MX devices in the Organization
     # to make a list of which to monitor via Ping.

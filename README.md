@@ -7,7 +7,10 @@ There are two main executable scripts in this repository:
 * The `MX_uplink_monitor_selector.py` script sends ICMP packets to the external interfaces of the MX devices to measure latency and packet loss. It can detect problems within seconds 
 of ocurring, but depending on where the script runs the data could be affected by conditions that do not actually affect the uplinks themselves 
   such as network problems on the network path between the server running the script and it's service provider. To minimize these, it is 
-  recommended the script runs in a cloud service close to where the MX device sends most of it's data. 
+  recommended the script runs in a cloud service close to where the MX device sends most of it's data. You can also configure the `scriptConnTestDestination` variable 
+  to have the script check network connectivity with a destination other than a monitored device to be able to detect if it is having 
+  overall connectivity issues to the internet and therefore not try to apply the scripts logic for failover/failback until the server 
+  where it is running regains good network connnectivity. 
   
 * The `MX_dashboard_uplink_monitor_selector.py` script retrieves the needed loss and latency values directly from the Meraki Dashboard 
 so it is data collected directly on the MX and reported by the device to the cloud, but this process takes some time so the Meraki Dashboard API 
@@ -69,8 +72,15 @@ https://developer.cisco.com/meraki/meraki-platform/#step-2-get-the-organization-
     *useWhiteList* is a boolean (set to True or False) that can be used to only include devices from certain NetworkIds in the monitoring.   
     To specify the list of network IDs to consider, add them one per line in the `networks_whitelist.txt` file in the same directory as this Python script. If the file is missing it will consider the whitelist as empty and not monitor any devices unless you set useWhiteList to False  
     *useWANpublicIP* is a boolean (set to True or False) that can be used to specify if you wish to use the publicIP of the WAN interfaces instead of the IP assigned to the interface, set useWANpublicIP to True. This will extract the publicIP of the uplink (if available) using this API call https://developer.cisco.com/meraki/api/#!get-network-device-uplink and overwrite the IP address obtained for the MX devices using this API call https://developer.cisco.com/meraki/api/#!get-network-device ( wan1Ip and wan2Ip )  
-    *scriptConnTestDestination*: Assign an IP address as a string to scriptConnTestDestination if you wish to have the script use a ping destination that is not one of the MX devices being evaluated  to make sure the script has good network connectivity and it does not confuse network connectivity problems  on the machine running the script with actual network issues at the sites where the MXs are installed. If you are to use this option, it is suggested you use the IP address of a DNS service such as Google ('8.8.8.8') , OpenDNS ('208.67.222.222') or any other that is very unlikely to stop responding.
- 
+    *scriptConnTestDestination*: Assign one or more IP addresses as a strings in a list to scriptConnTestDestinations if you wish to have the script
+use ping destinations that are not one of the MX devices being evaluated
+to make sure the script has good network connectivity and it does not confuse network connectivity problems
+on the machine running the script with actual network issues at the sites where the MXs are installed
+If you are to use this option, it is suggested you use the IP addresses of DNS services
+such as Google ('8.8.8.8') , OpenDNS ('208.67.222.222') or any other that is very unlikely to stop responding.
+For example, to test Google and OpenDNS, configure scriptConnTestDestinations=['8.8.8.8','208.67.222.222'],
+for just Google DNS, then scriptConnTestDestinations=['8.8.8.8']. Leave as an empty list (scriptConnTestDestinations=[])
+if you do not wish to have the script test connectivity with non-device destinations at all. 
 
 * If using the `MX_dashboard_uplink_monitor_selector.py` to obtain the statistics from the MX devices via the Meraki Dashboard 
   REST API, the following variables in the script:  

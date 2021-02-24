@@ -72,24 +72,28 @@ useWhiteList=True
 # using this API call https://developer.cisco.com/meraki/api/#!get-network-device ( wan1Ip and wan2Ip )
 useWANpublicIP=False
 
-# Assign an IP address as a string to scriptConnTestDestination if you wish to have the script use a ping destination that is not one of the MX devices being evaluated
+# Assign one or more IP addresses as a strings in a list to scriptConnTestDestinations if you wish to have the script
+# use ping destinations that are not one of the MX devices being evaluated
 # to make sure the script has good network connectivity and it does not confuse network connectivity problems
 # on the machine running the script with actual network issues at the sites where the MXs are installed
-# If you are to use this option, it is suggested you use the IP address of a DNS service
+# If you are to use this option, it is suggested you use the IP addresses of DNS services
 # such as Google ('8.8.8.8') , OpenDNS ('208.67.222.222') or any other that is very unlikely to stop responding.
-scriptConnTestDestination=''
+# for example, to test Google and OpenDNS, configure scriptConnTestDestinations=['8.8.8.8','208.67.222.222'],
+# for just Google DNS, then scriptConnTestDestinations=['8.8.8.8']. Leave as an empty list (scriptConnTestDestinations=[])
+# if you do not wish to use this option
+scriptConnTestDestinations=[]
 
 
 
 
 dashboard = meraki.DashboardAPI(api_key, output_log=False, suppress_logging= True)
 
-# isTestConnHealthy is a boolean used to indicate if the test connection is healthy or not IF scriptConnTestDestination
+# isTestConnDown is a boolean used to indicate if the test connection is healthy or not IF scriptConnTestDestinations
 # is configured.
-isTestConnHealthy=True
+isTestConnDown= {}
 
 class WAN_device:
-    global trouble_eval_window, average_latency_tolerance, period_loss_report_tolerance, failback_wait_time, isTestConnHealthy
+    global trouble_eval_window, average_latency_tolerance, period_loss_report_tolerance, failback_wait_time, isTestConnDown
 
     def __init__(self, networkId, serial, my_org_number, uplink1_ip, uplink2_ip):
         self.networkId = networkId
@@ -106,6 +110,8 @@ class WAN_device:
         self.init_time=time.time()
         self.lat1_reports=[]
         self.loss1_reports=[]
+        self.lat2_reports=[]
+        self.loss2_reports=[]
 
     def __repr__(self):
         return(f'NetworkId: {self.networkId}, Serial: {self.serial}, Org number: {self.my_org_number}')
@@ -118,14 +124,20 @@ class WAN_device:
         #   Float : latency as measured by a ping from where this script is running to the Meraki MX uplink interface
         #    -1 : interface is unreachable or disconnected, it is also used to estimate packet loss
         #    None : interface is not configured in the Meraki Dashboard for that MX device
-        global isTestConnHealthy
+        global isTestConnDown
 
         #first let's grab a current timestamp to use in all operations
         current_time=time.time()
 
+        # check for the existence of WAN1 also if it is responding, no point in switching back to it
+        # if not configured or disconnected!!
+        bActiveWAN1 = not (ulinksLatency[0] == None or ulinksLatency[0] == -1)
+
         # check for the existence of WAN2 also if it is responding, no point in switching to it
         # if not configured or disconnected!!
         bActiveWAN2=not (ulinksLatency[1]==None or ulinksLatency[1]==-1)
+
+
 
         # now check for the existence of a WAN1 uplink (otherwise do nothing)
         if (ulinksLatency[0] != None):
@@ -142,56 +154,90 @@ class WAN_device:
             while len(self.loss1_reports)>0 and current_time-self.loss1_reports[0] > trouble_eval_window:
                 throwaway=self.loss1_reports.pop(0)
 
+            # now we want to also keep stats for WAN2, so need to make sure the data structure
+            # exists and do just like we did with WAN1
+            if (ulinksLatency[1] != None):
+                # now let's add to the queues containing the latency or loss reports correspondingly
+                if ulinksLatency[1] >= 0:
+                    self.lat2_reports.append([current_time, ulinksLatency[1]])
+                else:
+                    self.loss2_reports.append(current_time)
+
+                # now we need to remove any reports that are outside the trouble_eval_window
+                while len(self.lat2_reports) > 0 and current_time - self.lat2_reports[0][0] > trouble_eval_window:
+                    throwaway = self.lat2_reports.pop(0)
+
+                while len(self.loss2_reports) > 0 and current_time - self.loss2_reports[0] > trouble_eval_window:
+                    throwaway = self.loss2_reports.pop(0)
+
             #check to see if we are within the initial eval window to start running the logic
             if current_time-self.init_time>=trouble_eval_window:
-                #first calculate the average latency time, if any (could be all loss packet reports)
-                average_latency=0
+                #first calculate the average latency time, if any (could be all loss packet reports) for WAN1
+                average_latency1=0
                 if len(self.lat1_reports)>0:
-                    lat_sum=0
+                    lat_sum1=0
                     for lat1_rep in self.lat1_reports:
-                        lat_sum+=lat1_rep[1]
-                    average_latency = lat_sum/len(self.lat1_reports)
+                        lat_sum1+=lat1_rep[1]
+                    average_latency1 = lat_sum1/len(self.lat1_reports)
+
+                # Now for WAN2
+                average_latency2=0
+                if len(self.lat2_reports)>0:
+                    lat_sum2=0
+                    for lat2_rep in self.lat2_reports:
+                        lat_sum2+=lat2_rep[1]
+                    average_latency2 = lat_sum2/len(self.lat2_reports)
 
                 #next, get the number of loss reports, if any (could have had no packet loss in period)
-                loss_count=len(self.loss1_reports)
+                loss_count1=len(self.loss1_reports)
+                loss_count2=len(self.loss2_reports)
 
-                print(self.serial," Average latency: ",average_latency," Loss count: ",loss_count)
 
-                if self.serial=='tester':
+                print(self.serial," Average latency1: ",average_latency1," Loss count1: ",loss_count1)
+                print(self.serial," Average latency2: ",average_latency2," Loss count2: ",loss_count2)
+
+
+                if self.serial[0 : 6]=='tester':
                     #handling for special object with serial 'tester' to decide if we proceed with logic
-                    if self.current_uplink==1 and (average_latency>average_latency_tolerance or loss_count>period_loss_report_tolerance):
+                    if self.current_uplink==1 and (average_latency1>average_latency_tolerance or loss_count1>period_loss_report_tolerance):
                         print("lat1_reports: ", self.lat1_reports)
                         print("loss1_reports: ", self.loss1_reports)
 
                         # sets global object to stop checking the rest of MX devices!!!
-                        isTestConnHealthy=False
+                        isTestConnDown[self.uplink1_ip]=True
 
                         #keep setting the "current_uplink" for consistency, but not needed for this type of object
                         self.current_uplink = 2
                         self.last_failover_time = current_time
-                        print('tester destination bad; skipping testing of other devices')
+                        print('tester '+self.serial+' experiencing problems; marking as such in list')
                     else:
                         if self.current_uplink == 2 and current_time - self.last_failover_time > failback_wait_time:
                             print(
-                                "Two minutes have passed since failover, check to see if tester address is ok to switch back...")
-                            if average_latency <= average_latency_tolerance and loss_count <= period_loss_report_tolerance:
+                                "Two minutes have passed since tester "+self.serial+" went bad, check to see if now ok to mark as such...")
+                            if average_latency1 <= average_latency_tolerance and loss_count1 <= period_loss_report_tolerance:
                                 print("lat1_reports: ", self.lat1_reports)
                                 print("loss1_reports: ", self.loss1_reports)
 
                                 #set global object to continue checking the rest of MX devices!!!
-                                isTestConnHealthy=True
+                                isTestConnDown[self.uplink1_ip]=False
                                 self.current_uplink = 1
-                                print('tester good after failback wait time.. switching to regular testing')
+                                print('tester '+self.serial+' back up after failback wait time.. marking as such in list')
 
 
-                elif isTestConnHealthy:
+                elif len(isTestConnDown) == 0 or not all(isTestConnDown.values()):
+
+                    bUnstableWAN1=average_latency1>average_latency_tolerance or loss_count1>period_loss_report_tolerance
+                    bUnstableWAN2=average_latency2>average_latency_tolerance or loss_count2>period_loss_report_tolerance
+                    print("bUnstableWAN1:",bUnstableWAN1, " bUnstableWAN2:",bUnstableWAN2)
+
+
                     # ready to check to see if we have to make any uplink changes
                     # first, and only if we are currently on uplink 1 (WAN1), check to see if it has been problematic during
                     # the last seconds specified in trouble_eval_window and see if we need to switch to uplink2 (WAN2)
-                    if self.current_uplink==1 and bActiveWAN2 and (average_latency>average_latency_tolerance or loss_count>period_loss_report_tolerance):
+                    if self.current_uplink==1 and bUnstableWAN1 and bActiveWAN2 and not bUnstableWAN2:
                         print("lat1_reports: ", self.lat1_reports)
                         print("loss1_reports: ", self.loss1_reports)
-                        # if WAN2 exists and have problems with WAN1, set it as uplink on device, turn off load balancing and record the time we failed over
+                        # Set WAN2 as uplink on device, turn off load balancing and record the time we failed over
                         dashboard.appliance.updateNetworkApplianceTrafficShapingUplinkSelection(networkId=self.networkId, loadBalancingEnabled=False, defaultUplink='wan2')
                         # since we called the Meraki Dashboard API withing a MX Device Object method which is called within a large loop
                         # we need to guarantee that we do not call the API more than 5 times per second so if we add a .2 sec delay
@@ -206,7 +252,7 @@ class WAN_device:
                             # number of seconds specified by trouble_eval_window, it is safe to fail back to WAN1 and turn
                             # on load balancing.
                             print("Two minutes have passed since failover, check to see if WAN1 is ok to switch back...")
-                            if average_latency<=average_latency_tolerance and loss_count<=period_loss_report_tolerance:
+                            if bActiveWAN1 and not bUnstableWAN1:
                                 print("lat1_reports: ", self.lat1_reports)
                                 print("loss1_reports: ", self.loss1_reports)
                                 dashboard.appliance.updateNetworkApplianceTrafficShapingUplinkSelection(
@@ -239,13 +285,16 @@ def refreshDevicesDict():
         print("Unexpected error: ",sys.exc_info()[0])
 
 
-    # If scriptConnTestDestination is set, add it as the first "MX device" with a serial number that
-    # identifies it the special test destination "device" to include in ping test but not consider for
+    # If scriptConnTestDestinations is not empty, add them as the first "MX devices" with a serial number that
+    # identifies them as a special test destination "device" to include in ping test but not consider for
     # switchover
-    if (scriptConnTestDestination!=''):
-        allMXDevices['tester'] = WAN_device(networkId='tester', serial='tester', uplink1_ip=scriptConnTestDestination, uplink2_ip='', my_org_number=org_id)
-        deviceSerialofUplinkIP[scriptConnTestDestination] = ['tester', 'wan1']
-        allUplinkIPs.append(scriptConnTestDestination)
+    if len(scriptConnTestDestinations)>0:
+        for testerIP in scriptConnTestDestinations:
+            testerSString='tester'+testerIP
+            allMXDevices[testerSString] = WAN_device(networkId=testerSString, serial=testerSString, uplink1_ip=testerIP, uplink2_ip='', my_org_number=org_id)
+            deviceSerialofUplinkIP[testerIP] = [testerSString, 'wan1']
+            allUplinkIPs.append(testerIP)
+            isTestConnDown[testerIP]=False
 
     # Get the last 5 minutes of UplinkLoss and Latency data for all MX devices in the Organization
     # to make a list of which to monitor via Ping.
